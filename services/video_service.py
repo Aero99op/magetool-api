@@ -106,24 +106,40 @@ class VideoService:
             'no_warnings': False,
             'verbose': True,
             # Handle rate limiting and retries
-            'retries': 3,
-            'fragment_retries': 3,
+            'retries': 10,
+            'fragment_retries': 10,
             'skip_unavailable_fragments': True,
             # Handle age-restricted content
             'age_limit': None,
-            # Avoid throttling
-            'sleep_interval': 1,
-            'max_sleep_interval': 5,
+            # Avoid throttling - increased sleep
+            'sleep_interval': 3,
+            'max_sleep_interval': 10,
+            'sleep_interval_requests': 1,
             # Progress hooks for debugging
             'progress_hooks': [lambda d: logger.info(f"Download progress: {d.get('status', 'unknown')} - {d.get('_percent_str', 'N/A')}")],
             # User agent to avoid blocks
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
             },
             # Extract flat for playlists
             'noplaylist': True,
             # Ignore errors and continue
             'ignoreerrors': False,
+            # === BYPASS OPTIONS ===
+            # Use Android/iOS client to bypass bot detection
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
+            # Geo bypass
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
+            # Don't check certificates (sometimes helps)
+            'nocheckcertificate': True,
         }
         
         try:
@@ -219,11 +235,18 @@ class VideoService:
             'quiet': False,
             'no_warnings': False,
             'verbose': True,
-            'retries': 3,
+            'retries': 10,
+            'fragment_retries': 10,
+            'sleep_interval': 2,
+            'max_sleep_interval': 5,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
             },
             'progress_hooks': [lambda d: logger.info(f"Download progress: {d.get('status', 'unknown')}")],
+            'geo_bypass': True,
+            'nocheckcertificate': True,
         }
         
         try:
@@ -341,14 +364,28 @@ class VideoService:
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
-            'retries': 3,
-            'fragment_retries': 3,
+            'retries': 10,
+            'fragment_retries': 10,
             'skip_unavailable_fragments': True,
             'noplaylist': True,
+            'sleep_interval': 3,
+            'max_sleep_interval': 10,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
             },
             'progress_hooks': [progress_hook],
+            # Bypass options
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
+            'nocheckcertificate': True,
         }
         
         loop = asyncio.get_event_loop()
@@ -486,11 +523,18 @@ class VideoService:
             'outtmpl': output_template + '.%(ext)s',
             'quiet': True,
             'no_warnings': True,
-            'retries': 3,
+            'retries': 10,
+            'fragment_retries': 10,
+            'sleep_interval': 2,
+            'max_sleep_interval': 5,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
             },
             'progress_hooks': [progress_hook],
+            'geo_bypass': True,
+            'nocheckcertificate': True,
         }
         
         result_holder = {"result": None, "error": None, "title": "Instagram Video"}
