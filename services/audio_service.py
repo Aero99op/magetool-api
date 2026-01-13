@@ -198,15 +198,34 @@ class AudioService:
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
             },
-            'extractor_args': {
+            'geo_bypass': True,
+            'nocheckcertificate': True,
+        }
+
+        # Cookie Bypass - The Real Fix
+        cookies_env = os.environ.get("YOUTUBE_COOKIES")
+        cookies_file_path = None
+        
+        if cookies_env:
+            try:
+                cookies_file_path = TEMP_DIR / f"cookies_{uuid.uuid4()}.txt"
+                if os.path.isfile(cookies_env):
+                    ydl_opts['cookiefile'] = cookies_env
+                else:
+                    # Replace CRLF with LF
+                    clean_cookies = cookies_env.replace('\r\n', '\n').replace('\r', '\n')
+                    cookies_file_path.write_text(clean_cookies, encoding='utf-8')
+                    ydl_opts['cookiefile'] = str(cookies_file_path)
+            except Exception as e:
+                pass
+        else:
+             # Only use Android client if NO cookies
+            ydl_opts['extractor_args'] = {
                 'youtube': {
                     'player_client': ['android', 'web'],
                     'player_skip': ['webpage', 'configs'],
                 }
-            },
-            'geo_bypass': True,
-            'nocheckcertificate': True,
-        }
+            }
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -230,3 +249,10 @@ class AudioService:
             }
         except Exception as e:
             return {"error": str(e)}
+        finally:
+            # Cleanup cookies file
+            if cookies_file_path and cookies_file_path.exists():
+                try:
+                    os.remove(cookies_file_path)
+                except:
+                    pass

@@ -128,19 +128,48 @@ class VideoService:
             # Ignore errors and continue
             'ignoreerrors': False,
             # === BYPASS OPTIONS ===
-            # Use Android/iOS client to bypass bot detection
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs'],
-                }
-            },
             # Geo bypass
             'geo_bypass': True,
             'geo_bypass_country': 'US',
             # Don't check certificates (sometimes helps)
             'nocheckcertificate': True,
         }
+
+        # Cookie Bypass - The Real Fix
+        # Users can provide cookies via env var YOUTUBE_COOKIES
+        cookies_env = os.environ.get("YOUTUBE_COOKIES")
+        cookies_file_path = None
+        
+        if cookies_env:
+            logger.info("🍪 Custom cookies found in environment, applying bypass...")
+            try:
+                # Create a temporary cookies file
+                cookies_file_path = TEMP_DIR / "cookies.txt"
+                # If it's a file path string (e.g. from Render secret file)
+                if os.path.isfile(cookies_env):
+                    ydl_opts['cookiefile'] = cookies_env
+                else:
+                    # Write content to file - ensure Unix newlines (LF)
+                    # Replace CRLF (\r\n) with LF (\n) effectively
+                    clean_cookies = cookies_env.replace('\r\n', '\n').replace('\r', '\n')
+                    cookies_file_path.write_text(clean_cookies, encoding='utf-8')
+                    ydl_opts['cookiefile'] = str(cookies_file_path)
+            except Exception as e:
+                logger.error(f"Failed to process cookies: {e}")
+        else:
+            # Fallback for when no cookies are provided:
+            # Use Android/iOS client to bypass bot detection (Only if NO cookies)
+            # Mixing cookies with Android client spoofing often causes issues
+            logger.info("📱 No cookies found, using Android client spoofing...")
+            ydl_opts['extractor_args'] = {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            }
+
+        try:
+
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -213,6 +242,13 @@ class VideoService:
         except Exception as e:
             logger.exception(f"Unexpected error downloading YouTube video: {e}")
             return {"error": f"Unexpected error: {str(e)[:200]}"}
+        finally:
+            # Clean up cookies file
+            if cookies_file_path and cookies_file_path.exists():
+                try:
+                    os.remove(cookies_file_path)
+                except:
+                    pass
     
     async def download_instagram(self, url: str) -> dict:
         """Download video from Instagram using yt-dlp"""
@@ -377,16 +413,35 @@ class VideoService:
             },
             'progress_hooks': [progress_hook],
             # Bypass options
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs'],
-                }
-            },
             'geo_bypass': True,
             'geo_bypass_country': 'US',
             'nocheckcertificate': True,
         }
+
+        # Cookie Bypass - The Real Fix
+        cookies_env = os.environ.get("YOUTUBE_COOKIES")
+        cookies_file_path = None
+        
+        if cookies_env:
+            try:
+                cookies_file_path = TEMP_DIR / f"cookies_{output_id}.txt"
+                if os.path.isfile(cookies_env):
+                    ydl_opts['cookiefile'] = cookies_env
+                else:
+                    # Replace CRLF with LF
+                    clean_cookies = cookies_env.replace('\r\n', '\n').replace('\r', '\n')
+                    cookies_file_path.write_text(clean_cookies, encoding='utf-8')
+                    ydl_opts['cookiefile'] = str(cookies_file_path)
+            except Exception as e:
+                pass # Silently fail for stream endpoint to keep it fast
+        else:
+             # Only use Android client if NO cookies
+            ydl_opts['extractor_args'] = {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            }
         
         loop = asyncio.get_event_loop()
         result_holder = {"result": None, "error": None, "title": "Unknown"}
@@ -403,6 +458,12 @@ class VideoService:
             except Exception as e:
                 result_holder["error"] = str(e)
             finally:
+                # Cleanup cookies file
+                if cookies_file_path and cookies_file_path.exists():
+                    try:
+                        os.remove(cookies_file_path)
+                    except:
+                        pass
                 asyncio.run_coroutine_threadsafe(progress_queue.put(None), loop)
         
         # Start download in thread
@@ -536,6 +597,24 @@ class VideoService:
             'geo_bypass': True,
             'nocheckcertificate': True,
         }
+
+        # Cookie Bypass - The Real Fix
+        cookies_env = os.environ.get("YOUTUBE_COOKIES")
+        cookies_file_path = None
+        
+        if cookies_env:
+            try:
+                cookies_file_path = TEMP_DIR / f"cookies_{output_id}.txt"
+                if os.path.isfile(cookies_env):
+                    ydl_opts['cookiefile'] = cookies_env
+                else:
+                    # Replace CRLF with LF
+                    clean_cookies = cookies_env.replace('\r\n', '\n').replace('\r', '\n')
+                    cookies_file_path.write_text(clean_cookies, encoding='utf-8')
+                    ydl_opts['cookiefile'] = str(cookies_file_path)
+            except Exception as e:
+                pass 
+        
         
         result_holder = {"result": None, "error": None, "title": "Instagram Video"}
         
@@ -550,6 +629,12 @@ class VideoService:
             except Exception as e:
                 result_holder["error"] = str(e)
             finally:
+                # Cleanup cookies file
+                if cookies_file_path and cookies_file_path.exists():
+                    try:
+                        os.remove(cookies_file_path)
+                    except:
+                        pass
                 asyncio.run_coroutine_threadsafe(progress_queue.put(None), loop)
         
         executor = ThreadPoolExecutor(max_workers=1)
