@@ -140,19 +140,44 @@ async def health_check():
     }
 
 @app.get("/api/download/{filename}")
-async def download_file(filename: str):
-    """Download a processed file from temp directory"""
+async def download_file(filename: str, download_name: str = None):
+    """Download a processed file from temp directory with optional custom filename"""
     file_path = TEMP_DIR / filename
+    
+    # Fuzzy matching if exact file doesn't exist
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        # Try to find a file starting with the filename (uuid)
+        potential_matches = list(TEMP_DIR.glob(f"{filename}.*"))
+        if potential_matches:
+            file_path = potential_matches[0]
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
     
     # Schedule deletion after download (60 seconds delay)
-    delete_file_after_download(TEMP_DIR, filename, delay_seconds=60)
+    # Use the original filename requested for cleanup reference if possible, or the found one
+    delete_file_after_download(TEMP_DIR, file_path.name, delay_seconds=60)
+    
+    # Determine the final filename to serve
+    # If download_name is provided, use it. 
+    # If not, use the actual filename found on disk (which includes extension)
+    served_filename = download_name if download_name else file_path.name
+    
+    # If download_name was provided but lacks extension, and we found a file with extension,
+    # append the correct extension
+    if download_name and '.' not in download_name and file_path.suffix:
+        served_filename = f"{download_name}{file_path.suffix}"
+
+    # Guess media type
+    import mimetypes
+    media_type, _ = mimetypes.guess_type(served_filename)
+    if not media_type:
+        media_type = "application/octet-stream"
     
     return FileResponse(
         path=file_path,
-        filename=filename,
-        media_type="application/octet-stream"
+        filename=served_filename,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{served_filename}"'}
     )
 
 @app.delete("/api/cleanup/{filename}")
