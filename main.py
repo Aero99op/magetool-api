@@ -27,7 +27,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Temp directory for processed files
-TEMP_DIR = Path("./temp")
+TEMP_DIR = Path(os.environ.get("TEMP_DIR", "./temp"))
+# Create temp directory immediately (needed for StaticFiles mount)
+TEMP_DIR.mkdir(exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -113,7 +115,7 @@ async def validate_request_size(request: Request, call_next):
     return await call_next(request)
 
 # Mount temp directory for file serving
-app.mount("/temp", StaticFiles(directory="temp"), name="temp")
+app.mount("/temp", StaticFiles(directory=str(TEMP_DIR)), name="temp")
 
 # Include routers
 app.include_router(images.router, prefix="/api/images", tags=["Images"])
