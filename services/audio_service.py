@@ -72,7 +72,29 @@ class AudioService:
             output_filename = f"{uuid.uuid4()}.{target_format}"
             output_path = TEMP_DIR / output_filename
             
-            audio.export(output_path, format=target_format)
+            # Specialized handling for problematic formats
+            export_args = {}
+            target_format_lower = target_format.lower()
+            
+            if target_format_lower == 'm4a':
+                export_args = {
+                    'format': 'ipod',
+                    'parameters': ["-strict", "-2"]  # For experimental codecs if needed
+                }
+            elif target_format_lower == 'aac':
+                 export_args = {
+                    'format': 'adts', # ADTS container for raw AAC
+                    'parameters': ["-strict", "-2"]
+                }
+            elif target_format_lower == 'wma':
+                 export_args = {
+                    'format': 'asf',  # WMA usually lives in ASF container
+                    'codec': 'wmav2'  # Standard WMA codec
+                }
+            else:
+                export_args = {'format': target_format}
+                
+            audio.export(output_path, **export_args)
             
             return {
                 "filename": output_filename,
