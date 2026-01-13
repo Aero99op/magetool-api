@@ -169,9 +169,6 @@ class VideoService:
             }
 
         try:
-
-        
-        try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 logger.info("Extracting video info...")
                 info = ydl.extract_info(url, download=True)
