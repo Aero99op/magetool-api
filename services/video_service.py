@@ -40,13 +40,15 @@ def _get_httpx():
 TEMP_DIR = Path("./temp")
 
 # Cobalt API Configuration
+# Source: https://instances.cobalt.best (community instance tracker)
 # The official api.cobalt.tools has bot protection - use community instances or self-host
-# Multiple instances for fallback support
 COBALT_API_URL = os.environ.get("COBALT_API_URL", "")
 COBALT_INSTANCES = [
     COBALT_API_URL,  # User-specified (if any)
-    "https://cobalt.api.timelessnesses.me",  # Community instance
-    "https://api.cobalt.lol",  # Community instance
+    "https://cobalt-api.meowing.de",      # 96% uptime
+    "https://cobalt-backend.canine.tools", # 80% uptime  
+    "https://kityune.imput.net",           # 76% uptime (official)
+    "https://capi.3kh0.net",               # 72% uptime
 ]
 # Filter out empty strings
 COBALT_INSTANCES = [url for url in COBALT_INSTANCES if url]
@@ -141,7 +143,8 @@ class VideoService:
         
         for cobalt_url in COBALT_INSTANCES:
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                # verify=False to handle self-signed certs on some community instances
+                async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
                     # Step 1: Request download URL from Cobalt
                     logger.info(f"📡 Trying Cobalt instance: {cobalt_url}")
                     
@@ -535,7 +538,8 @@ class VideoService:
         if httpx and COBALT_INSTANCES:
             for cobalt_url in COBALT_INSTANCES:
                 try:
-                    async with httpx.AsyncClient(timeout=120.0) as client:
+                    # verify=False to handle self-signed certs on some community instances
+                    async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
                         yield {"status": "downloading", "percent": "5%", "percent_num": 5, "message": f"Trying {cobalt_url}..."}
                         
                         response = await client.post(
