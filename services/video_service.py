@@ -40,15 +40,12 @@ def _get_httpx():
 TEMP_DIR = Path("./temp")
 
 # Cobalt API Configuration
-# Source: https://instances.cobalt.best (community instance tracker)
-# The official api.cobalt.tools has bot protection - use community instances or self-host
-COBALT_API_URL = os.environ.get("COBALT_API_URL", "")
+# Primary: Self-hosted on Render, Fallbacks: Community instances
+COBALT_API_URL = os.environ.get("COBALT_API_URL", "https://magetool-api-cobalt-docker.onrender.com")
 COBALT_INSTANCES = [
-    COBALT_API_URL,  # User-specified (if any)
-    "https://cobalt-api.meowing.de",      # 96% uptime
-    "https://cobalt-backend.canine.tools", # 80% uptime  
-    "https://kityune.imput.net",           # 76% uptime (official)
-    "https://capi.3kh0.net",               # 72% uptime
+    COBALT_API_URL,  # Self-hosted (PRIMARY)
+    "https://cobalt-api.meowing.de",      # Fallback: 96% uptime
+    "https://cobalt-backend.canine.tools", # Fallback: 80% uptime  
 ]
 # Filter out empty strings
 COBALT_INSTANCES = [url for url in COBALT_INSTANCES if url]
