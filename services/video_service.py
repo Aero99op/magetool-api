@@ -680,19 +680,23 @@ class VideoService:
         cookies_file_path = None
         
         if cookies_env:
+            logger.info("🍪 [STREAM] Custom cookies found in environment!")
             try:
                 cookies_file_path = TEMP_DIR / f"cookies_{output_id}.txt"
                 if os.path.isfile(cookies_env):
                     ydl_opts['cookiefile'] = cookies_env
+                    logger.info(f"🍪 [STREAM] Using cookies file: {cookies_env}")
                 else:
                     # Replace CRLF with LF
                     clean_cookies = cookies_env.replace('\r\n', '\n').replace('\r', '\n')
                     cookies_file_path.write_text(clean_cookies, encoding='utf-8')
                     ydl_opts['cookiefile'] = str(cookies_file_path)
+                    logger.info(f"🍪 [STREAM] Wrote cookies to: {cookies_file_path}")
             except Exception as e:
-                pass # Silently fail for stream endpoint to keep it fast
+                logger.error(f"🍪 [STREAM] Failed to process cookies: {e}")
         else:
-             # Only use Android client if NO cookies
+            logger.info("📱 [STREAM] No cookies found, using Android client spoofing...")
+            # Only use Android client if NO cookies
             ydl_opts['extractor_args'] = {
                 'youtube': {
                     'player_client': ['android', 'web'],
