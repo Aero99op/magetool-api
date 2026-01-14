@@ -1,0 +1,11 @@
+# Dockerfile for self-hosted Cobalt on Render
+# Uses the official Cobalt Docker image
+
+FROM ghcr.io/imputnet/cobalt:latest
+
+# Render uses port 10000 by default
+ENV API_PORT=10000
+ENV API_URL=0.0.0.0:10000
+
+# Expose the port
+EXPOSE 10000

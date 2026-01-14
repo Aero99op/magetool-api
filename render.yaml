@@ -2,6 +2,7 @@
 # This file auto-configures the deployment on Render
 
 services:
+  # Main API Service
   - type: web
     name: magetool-api
     runtime: python
@@ -14,6 +15,21 @@ services:
       - key: TEMP_DIR
         value: /tmp/magetool
       - key: COBALT_API_URL
-        value: "https://api.cobalt.tools"  # Or self-hosted instance
+        fromService:
+          name: cobalt
+          type: web
+          property: host  # Will be https://cobalt-xxxx.onrender.com
     healthCheckPath: /api/health
 
+  # Self-hosted Cobalt Instance (Docker)
+  - type: web
+    name: cobalt
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.cobalt
+    envVars:
+      - key: API_PORT
+        value: "10000"
+      - key: API_URL
+        value: "0.0.0.0:10000"
+    healthCheckPath: /
