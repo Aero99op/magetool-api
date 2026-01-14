@@ -549,66 +549,68 @@ class VideoService:
                             headers={
                                 "Accept": "application/json",
                                 "Content-Type": "application/json",
-                        }
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        status = data.get("status")
-                        download_url = None
-                        cobalt_filename = output_filename
+                            }
+                        )
                         
-                        if status in ["tunnel", "redirect"]:
-                            download_url = data.get("url")
-                            cobalt_filename = data.get("filename", output_filename)
-                        elif status == "picker":
-                            picker = data.get("picker", [])
-                            if picker:
-                                download_url = picker[0].get("url")
-                                cobalt_filename = picker[0].get("filename", output_filename)
-                        
-                        if download_url:
-                            yield {"status": "downloading", "percent": "15%", "percent_num": 15, "message": "Downloading via Cobalt..."}
+                        if response.status_code == 200:
+                            data = response.json()
+                            status = data.get("status")
+                            download_url = None
+                            cobalt_filename = output_filename
                             
-                            # Stream download with progress
-                            async with client.stream("GET", download_url, follow_redirects=True, timeout=300.0) as stream:
-                                if stream.status_code == 200:
-                                    total = int(stream.headers.get("content-length", 0))
-                                    downloaded = 0
-                                    chunks = []
-                                    
-                                    async for chunk in stream.aiter_bytes(chunk_size=65536):
-                                        chunks.append(chunk)
-                                        downloaded += len(chunk)
-                                        if total > 0:
-                                            pct = 15 + int((downloaded / total) * 80)
+                            if status in ["tunnel", "redirect"]:
+                                download_url = data.get("url")
+                                cobalt_filename = data.get("filename", output_filename)
+                            elif status == "picker":
+                                picker = data.get("picker", [])
+                                if picker:
+                                    download_url = picker[0].get("url")
+                                    cobalt_filename = picker[0].get("filename", output_filename)
+                            
+                            if download_url:
+                                yield {"status": "downloading", "percent": "15%", "percent_num": 15, "message": "Downloading via Cobalt..."}
+                                
+                                # Stream download with progress
+                                async with client.stream("GET", download_url, follow_redirects=True, timeout=300.0) as stream:
+                                    if stream.status_code == 200:
+                                        total = int(stream.headers.get("content-length", 0))
+                                        downloaded = 0
+                                        chunks = []
+                                        
+                                        async for chunk in stream.aiter_bytes(chunk_size=65536):
+                                            chunks.append(chunk)
+                                            downloaded += len(chunk)
+                                            if total > 0:
+                                                pct = 15 + int((downloaded / total) * 80)
+                                                yield {
+                                                    "status": "downloading",
+                                                    "percent": f"{pct}%",
+                                                    "percent_num": pct,
+                                                    "downloaded": f"{downloaded // (1024*1024)}MB",
+                                                    "total": f"{total // (1024*1024)}MB",
+                                                }
+                                        
+                                        output_path.write_bytes(b"".join(chunks))
+                                        file_size = output_path.stat().st_size
+                                        
+                                        if file_size > 1000:
+                                            title = Path(cobalt_filename).stem if cobalt_filename else "YouTube Video"
                                             yield {
-                                                "status": "downloading",
-                                                "percent": f"{pct}%",
-                                                "percent_num": pct,
-                                                "downloaded": f"{downloaded // (1024*1024)}MB",
-                                                "total": f"{total // (1024*1024)}MB",
+                                                "status": "complete",
+                                                "filename": output_filename,
+                                                "title": title,
+                                                "duration": 0,
+                                                "size": file_size,
+                                                "source": "cobalt"
                                             }
-                                    
-                                    output_path.write_bytes(b"".join(chunks))
-                                    file_size = output_path.stat().st_size
-                                    
-                                    if file_size > 1000:
-                                        title = Path(cobalt_filename).stem if cobalt_filename else "YouTube Video"
-                                        yield {
-                                            "status": "complete",
-                                            "filename": output_filename,
-                                            "title": title,
-                                            "duration": 0,
-                                            "size": file_size,
-                                            "source": "cobalt"
-                                        }
-                                        remove_active_file(output_filename)
-                                        cobalt_success = True
+                                            remove_active_file(output_filename)
+                                            cobalt_success = True
+                                            return  # Success! Exit the generator
                                             
-            except Exception as e:
-                logger.warning(f"Cobalt streaming failed: {e}")
-                output_path.unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning(f"Cobalt instance {cobalt_url} failed: {e}")
+                    output_path.unlink(missing_ok=True)
+                    continue  # Try next instance
         
         if cobalt_success:
             return
