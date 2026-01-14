@@ -152,3 +152,41 @@ async def ai_identify_video(files: List[UploadFile] = File(...)):
     
     return {"success": True, "results": results}
 
+
+# ==================== YouTube OAuth Authentication ====================
+
+@router.post("/youtube-oauth/start")
+async def start_youtube_oauth():
+    """
+    Start YouTube OAuth device flow.
+    Returns device code and verification URL for user to authorize.
+    """
+    result = await video_service.start_youtube_oauth()
+    return result
+
+@router.get("/youtube-oauth/status")
+async def check_youtube_oauth_status():
+    """
+    Check if YouTube OAuth is authorized.
+    Returns current authorization status.
+    """
+    result = await video_service.check_youtube_oauth_status()
+    return result
+
+@router.post("/youtube-oauth/complete")
+async def complete_youtube_oauth():
+    """
+    Complete OAuth flow - poll for token after user authorizes.
+    Call this after user has entered the code on google.com/device
+    """
+    result = await video_service.complete_youtube_oauth()
+    return result
+
+@router.delete("/youtube-oauth/revoke")
+async def revoke_youtube_oauth():
+    """
+    Revoke/clear YouTube OAuth tokens.
+    User will need to re-authorize.
+    """
+    result = await video_service.revoke_youtube_oauth()
+    return result

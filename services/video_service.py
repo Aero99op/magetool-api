@@ -677,11 +677,18 @@ class VideoService:
             'nocheckcertificate': True,
         }
 
-        # Cookie Bypass - The Real Fix
+        # Authentication Priority: OAuth token > Cookies > Android spoofing
+        oauth_token = self._get_oauth_token()
         cookies_env = os.environ.get("YOUTUBE_COOKIES")
         cookies_file_path = None
         
-        if cookies_env:
+        if oauth_token:
+            # Use OAuth token (most reliable)
+            logger.info("🔐 [STREAM] Using OAuth token for authentication!")
+            ydl_opts['username'] = 'oauth2'
+            ydl_opts['password'] = ''
+            # yt-dlp will use cached token
+        elif cookies_env:
             logger.info("🍪 [STREAM] Custom cookies found in environment!")
             try:
                 cookies_file_path = TEMP_DIR / f"cookies_{output_id}.txt"
@@ -697,8 +704,8 @@ class VideoService:
             except Exception as e:
                 logger.error(f"🍪 [STREAM] Failed to process cookies: {e}")
         else:
-            logger.info("📱 [STREAM] No cookies found, using Android client spoofing...")
-            # Only use Android client if NO cookies
+            logger.info("📱 [STREAM] No auth found, using Android client spoofing...")
+            # Only use Android client if NO cookies/OAuth
             ydl_opts['extractor_args'] = {
                 'youtube': {
                     'player_client': ['android', 'web'],
@@ -1039,3 +1046,257 @@ class VideoService:
         finally:
             if temp_path.exists():
                 os.remove(temp_path)
+
+    # ==================== YouTube OAuth Methods ====================
+    
+    # YouTube TV Client OAuth credentials (public, used by yt-dlp)
+    YOUTUBE_TV_CLIENT_ID = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
+    YOUTUBE_TV_CLIENT_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
+    OAUTH_TOKEN_FILE = TEMP_DIR / "youtube_oauth_token.json"
+    OAUTH_DEVICE_FILE = TEMP_DIR / "youtube_oauth_device.json"
+    
+    async def start_youtube_oauth(self) -> dict:
+        """
+        Start YouTube OAuth device flow.
+        Returns device code and URL for user to authorize.
+        """
+        import httpx
+        
+        try:
+            # Request device code from Google
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://oauth2.googleapis.com/device/code",
+                    data={
+                        "client_id": self.YOUTUBE_TV_CLIENT_ID,
+                        "scope": "https://www.googleapis.com/auth/youtube"
+                    }
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"OAuth device code request failed: {response.text}")
+                    return {
+                        "success": False,
+                        "error": f"Failed to start OAuth: {response.text}"
+                    }
+                
+                data = response.json()
+                
+                # Save device code for later polling
+                self.OAUTH_DEVICE_FILE.write_text(json.dumps(data), encoding='utf-8')
+                
+                logger.info(f"🔐 OAuth started - user code: {data.get('user_code')}")
+                
+                return {
+                    "success": True,
+                    "user_code": data.get("user_code"),
+                    "verification_url": data.get("verification_url"),
+                    "expires_in": data.get("expires_in", 1800),
+                    "interval": data.get("interval", 5),
+                    "message": f"Go to {data.get('verification_url')} and enter code: {data.get('user_code')}"
+                }
+                
+        except Exception as e:
+            logger.error(f"OAuth start error: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def check_youtube_oauth_status(self) -> dict:
+        """Check if OAuth is authorized and tokens are valid."""
+        if not self.OAUTH_TOKEN_FILE.exists():
+            # Check if device flow is in progress
+            if self.OAUTH_DEVICE_FILE.exists():
+                return {
+                    "authorized": False,
+                    "status": "pending",
+                    "message": "OAuth in progress - waiting for user authorization"
+                }
+            return {
+                "authorized": False,
+                "status": "not_started",
+                "message": "OAuth not started. Call /youtube-oauth/start first"
+            }
+        
+        try:
+            token_data = json.loads(self.OAUTH_TOKEN_FILE.read_text(encoding='utf-8'))
+            import time
+            
+            # Check if token is expired
+            expires_at = token_data.get("expires_at", 0)
+            if time.time() > expires_at:
+                return {
+                    "authorized": False,
+                    "status": "expired",
+                    "message": "Token expired. Call /youtube-oauth/complete to refresh"
+                }
+            
+            return {
+                "authorized": True,
+                "status": "authorized",
+                "expires_in": int(expires_at - time.time()),
+                "message": "YouTube OAuth is active"
+            }
+        except Exception as e:
+            return {"authorized": False, "status": "error", "error": str(e)}
+    
+    async def complete_youtube_oauth(self) -> dict:
+        """
+        Poll for token after user authorizes.
+        Call this after user enters code on google.com/device
+        """
+        import httpx
+        import time
+        
+        # Check for existing valid token first (refresh if needed)
+        if self.OAUTH_TOKEN_FILE.exists():
+            try:
+                token_data = json.loads(self.OAUTH_TOKEN_FILE.read_text(encoding='utf-8'))
+                refresh_token = token_data.get("refresh_token")
+                
+                if refresh_token:
+                    # Try to refresh the token
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            "https://oauth2.googleapis.com/token",
+                            data={
+                                "client_id": self.YOUTUBE_TV_CLIENT_ID,
+                                "client_secret": self.YOUTUBE_TV_CLIENT_SECRET,
+                                "refresh_token": refresh_token,
+                                "grant_type": "refresh_token"
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            new_data = response.json()
+                            new_data["refresh_token"] = refresh_token  # Keep refresh token
+                            new_data["expires_at"] = time.time() + new_data.get("expires_in", 3600)
+                            
+                            self.OAUTH_TOKEN_FILE.write_text(json.dumps(new_data), encoding='utf-8')
+                            logger.info("🔄 OAuth token refreshed successfully")
+                            
+                            return {
+                                "success": True,
+                                "status": "refreshed",
+                                "message": "Token refreshed successfully",
+                                "expires_in": new_data.get("expires_in", 3600)
+                            }
+            except Exception as e:
+                logger.warning(f"Token refresh failed: {e}")
+        
+        # Check for pending device flow
+        if not self.OAUTH_DEVICE_FILE.exists():
+            return {
+                "success": False,
+                "error": "No pending OAuth flow. Call /youtube-oauth/start first"
+            }
+        
+        try:
+            device_data = json.loads(self.OAUTH_DEVICE_FILE.read_text(encoding='utf-8'))
+            device_code = device_data.get("device_code")
+            
+            if not device_code:
+                return {"success": False, "error": "Invalid device data"}
+            
+            # Poll for token
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": self.YOUTUBE_TV_CLIENT_ID,
+                        "client_secret": self.YOUTUBE_TV_CLIENT_SECRET,
+                        "device_code": device_code,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
+                    }
+                )
+                
+                data = response.json()
+                
+                if response.status_code == 200:
+                    # Success! Save token
+                    data["expires_at"] = time.time() + data.get("expires_in", 3600)
+                    self.OAUTH_TOKEN_FILE.write_text(json.dumps(data), encoding='utf-8')
+                    
+                    # Clean up device file
+                    if self.OAUTH_DEVICE_FILE.exists():
+                        self.OAUTH_DEVICE_FILE.unlink()
+                    
+                    logger.info("✅ OAuth authorization successful!")
+                    
+                    return {
+                        "success": True,
+                        "status": "authorized",
+                        "message": "Successfully authorized! YouTube downloads will now work.",
+                        "expires_in": data.get("expires_in", 3600)
+                    }
+                
+                # Handle pending/error states
+                error = data.get("error", "unknown")
+                
+                if error == "authorization_pending":
+                    return {
+                        "success": False,
+                        "status": "pending",
+                        "message": "Waiting for user to authorize. Please enter the code on Google."
+                    }
+                elif error == "slow_down":
+                    return {
+                        "success": False,
+                        "status": "slow_down",
+                        "message": "Too many requests. Please wait a moment."
+                    }
+                elif error == "expired_token":
+                    if self.OAUTH_DEVICE_FILE.exists():
+                        self.OAUTH_DEVICE_FILE.unlink()
+                    return {
+                        "success": False,
+                        "status": "expired",
+                        "message": "Device code expired. Please start OAuth again."
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "status": "error",
+                        "error": data.get("error_description", error)
+                    }
+                    
+        except Exception as e:
+            logger.error(f"OAuth complete error: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def revoke_youtube_oauth(self) -> dict:
+        """Revoke OAuth tokens and clear cached data."""
+        try:
+            deleted = []
+            
+            if self.OAUTH_TOKEN_FILE.exists():
+                self.OAUTH_TOKEN_FILE.unlink()
+                deleted.append("token")
+            
+            if self.OAUTH_DEVICE_FILE.exists():
+                self.OAUTH_DEVICE_FILE.unlink()
+                deleted.append("device")
+            
+            logger.info("🗑️ OAuth tokens revoked")
+            
+            return {
+                "success": True,
+                "message": f"OAuth revoked. Cleared: {', '.join(deleted) if deleted else 'nothing to clear'}"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _get_oauth_token(self) -> str | None:
+        """Get cached OAuth access token if valid."""
+        if not self.OAUTH_TOKEN_FILE.exists():
+            return None
+        
+        try:
+            import time
+            token_data = json.loads(self.OAUTH_TOKEN_FILE.read_text(encoding='utf-8'))
+            
+            # Check expiry
+            if time.time() > token_data.get("expires_at", 0):
+                return None
+            
+            return token_data.get("access_token")
+        except:
+            return None
