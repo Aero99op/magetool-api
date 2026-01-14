@@ -381,6 +381,19 @@ class VideoService:
             file_size = final_path.stat().st_size
             logger.info(f"Final file: {final_path}, size: {file_size} bytes")
             
+            # EXTENSION SAFETY CHECK
+            if not Path(output_filename).suffix:
+                logger.warning(f"⚠️ Output filename {output_filename} missing extension, appending .mp4")
+                output_filename = f"{output_filename}.mp4"
+                # Check if we need to rename on disk too
+                if final_path.exists() and not final_path.suffix:
+                    new_final_path = final_path.with_suffix('.mp4')
+                    try:
+                        os.rename(final_path, new_final_path)
+                        final_path = new_final_path
+                    except Exception as e:
+                        logger.error(f"Failed to rename missing extension file: {e}")
+            
             return {
                 "filename": output_filename,
                 "title": title,
@@ -485,6 +498,17 @@ class VideoService:
             
             file_size = final_path.stat().st_size
             logger.info(f"Final file: {final_path}, size: {file_size} bytes")
+            
+            # EXTENSION SAFETY CHECK
+            if not Path(output_filename).suffix:
+                logger.warning(f"⚠️ Output filename {output_filename} missing extension, appending .mp4")
+                output_filename = f"{output_filename}.mp4"
+                if final_path.exists() and not final_path.suffix:
+                    new_final_path = final_path.with_suffix('.mp4')
+                    try:
+                        os.rename(final_path, new_final_path)
+                    except Exception as e:
+                        logger.error(f"Failed to rename missing extension file: {e}")
             
             return {
                 "filename": output_filename,

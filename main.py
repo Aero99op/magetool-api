@@ -173,14 +173,62 @@ async def download_file(filename: str, download_name: str = None):
         else:
             served_filename = download_name
 
-    # Guess media type
+    logger.info(f"📤 Serving file: {served_filename} from {file_path} (suffix={file_path.suffix})")
+
+    # === Extension Fix for Playwright Artifacts / Missing Extensions ===
+    # If file has no suffix, try to detect it
+    if not Path(served_filename).suffix and file_path.exists():
+        try:
+            # Read first 32 bytes to check magic numbers
+            with open(file_path, 'rb') as f:
+                header = f.read(32)
+            
+            new_suffix = None
+            
+            # Common file signatures
+            if header.startswith(b'\xff\xd8\xff'):
+                new_suffix = '.jpg'
+            elif header.startswith(b'\x89PNG\r\n\x1a\n'):
+                new_suffix = '.png'
+            elif header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+                new_suffix = '.gif'
+            elif header.startswith(b'%PDF'):
+                new_suffix = '.pdf'
+            elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb') or header.startswith(b'\xff\xf3') or header.startswith(b'\xff\xf2'):
+                new_suffix = '.mp3'
+            elif header[4:12] == b'ftypmp42' or header[4:12] == b'ftypisom' or header[4:12] == b'ftypMSNV':
+                new_suffix = '.mp4'
+            elif header.startswith(b'\x1aE\xdf\xa3'):
+                new_suffix = '.mkv'
+            elif header.startswith(b'RIFF') and header[8:12] == b'WEBP':
+                new_suffix = '.webp'
+            
+            if new_suffix:
+                logger.info(f"🔍 Detected file type from header: {new_suffix}")
+                
+                # update served filename
+                served_filename = f"{served_filename}{new_suffix}"
+                
+                # OPTIONAL: Rename the original file to fix specific peristence issue
+                # We only rename if it's a UUID-like file to avoid messing up specific user files
+                # if 'playwright' in str(file_path) or len(file_path.name) > 30:
+                try:
+                    new_path = file_path.with_suffix(new_suffix)
+                    if not new_path.exists():
+                        os.rename(file_path, new_path)
+                        file_path = new_path
+                        logger.info(f"✅ Renamed extension-less file to: {file_path.name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not rename file: {e}")
+        except Exception as e:
+            logger.error(f"❌ Error detecting file type: {e}")
+            
+    # Re-guess media type after potential fix
     import mimetypes
     media_type, _ = mimetypes.guess_type(served_filename)
     if not media_type:
         media_type = "application/octet-stream"
-    
-    logger.info(f"📤 Serving file: {served_filename} from {file_path} (suffix={file_path.suffix})")
-    
+
     return FileResponse(
         path=file_path,
         filename=served_filename,
