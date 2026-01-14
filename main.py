@@ -164,10 +164,13 @@ async def download_file(filename: str, download_name: str = None):
     # If not, use the actual filename found on disk (which includes extension)
     served_filename = download_name if download_name else file_path.name
     
-    # If download_name was provided but lacks extension, and we found a file with extension,
-    # append the correct extension
-    if download_name and '.' not in download_name and file_path.suffix:
-        served_filename = f"{download_name}{file_path.suffix}"
+    # If download_name was provided, ensure it has the correct extension
+    if download_name and file_path.suffix:
+        # Check if download_name already ends with the correct extension (case-insensitive)
+        if not download_name.lower().endswith(file_path.suffix.lower()):
+            served_filename = f"{download_name}{file_path.suffix}"
+        else:
+            served_filename = download_name
 
     # Guess media type
     import mimetypes
