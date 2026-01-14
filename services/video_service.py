@@ -13,6 +13,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from utils.locking import add_active_file, remove_active_file
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Lazy imports - only load heavy libraries when needed
 YTDLP_MODULE = None
 HTTPX_CLIENT = None
