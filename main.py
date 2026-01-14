@@ -144,6 +144,7 @@ async def health_check():
 @app.get("/api/download/{filename}")
 async def download_file(filename: str, download_name: str = None):
     """Download a processed file from temp directory with optional custom filename"""
+    logger.info(f"📥 Download request: filename={filename}, download_name={download_name}")
     file_path = TEMP_DIR / filename
     
     # Fuzzy matching if exact file doesn't exist
@@ -177,6 +178,8 @@ async def download_file(filename: str, download_name: str = None):
     media_type, _ = mimetypes.guess_type(served_filename)
     if not media_type:
         media_type = "application/octet-stream"
+    
+    logger.info(f"📤 Serving file: {served_filename} from {file_path} (suffix={file_path.suffix})")
     
     return FileResponse(
         path=file_path,
