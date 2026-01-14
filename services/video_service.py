@@ -37,7 +37,9 @@ def _get_httpx():
             HTTPX_CLIENT = False
     return HTTPX_CLIENT
 
-TEMP_DIR = Path("./temp")
+# Use TEMP_DIR from environment variable, fallback to ./temp for local dev
+TEMP_DIR = Path(os.environ.get("TEMP_DIR", "./temp"))
+TEMP_DIR.mkdir(parents=True, exist_ok=True)  # Ensure temp directory exists
 
 # Cobalt API Configuration
 # Primary: Self-hosted on Render, Fallbacks: Community instances
