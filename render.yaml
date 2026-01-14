@@ -13,4 +13,7 @@ services:
         value: "3.11"
       - key: TEMP_DIR
         value: /tmp/magetool
+      - key: COBALT_API_URL
+        value: "https://api.cobalt.tools"  # Or self-hosted instance
     healthCheckPath: /api/health
+

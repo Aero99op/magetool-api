@@ -9,11 +9,13 @@ import uuid
 import os
 import subprocess
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from utils.locking import add_active_file, remove_active_file
 
 # Lazy imports - only load heavy libraries when needed
 YTDLP_MODULE = None
+HTTPX_CLIENT = None
 
 def _get_ytdlp():
     global YTDLP_MODULE
@@ -25,7 +27,20 @@ def _get_ytdlp():
             YTDLP_MODULE = False
     return YTDLP_MODULE
 
+def _get_httpx():
+    global HTTPX_CLIENT
+    if HTTPX_CLIENT is None:
+        try:
+            import httpx
+            HTTPX_CLIENT = httpx
+        except ImportError:
+            HTTPX_CLIENT = False
+    return HTTPX_CLIENT
+
 TEMP_DIR = Path("./temp")
+
+# Cobalt API Configuration
+COBALT_API_URL = os.environ.get("COBALT_API_URL", "https://api.cobalt.tools")
 
 class VideoService:
     """Service for video processing operations"""
@@ -79,8 +94,128 @@ class VideoService:
                 os.remove(temp_path)
     
     async def download_youtube(self, url: str) -> dict:
-        """Download video from YouTube using yt-dlp"""
-        import logging
+        """
+        Download video from YouTube using hybrid approach:
+        1. Try Cobalt API first (handles bot detection better)
+        2. Fallback to yt-dlp if Cobalt fails
+        """
+        logger = logging.getLogger(__name__)
+        
+        # Try Cobalt API first
+        logger.info(f"🚀 Attempting YouTube download via Cobalt API: {url}")
+        cobalt_result = await self._download_via_cobalt(url)
+        
+        if not cobalt_result.get("error"):
+            logger.info("✅ Cobalt API download successful!")
+            return cobalt_result
+        
+        # Cobalt failed, fallback to yt-dlp
+        logger.warning(f"⚠️ Cobalt API failed: {cobalt_result.get('error')}. Falling back to yt-dlp...")
+        return await self._download_via_ytdlp(url)
+    
+    async def _download_via_cobalt(self, url: str) -> dict:
+        """Download video using Cobalt API"""
+        logger = logging.getLogger(__name__)
+        httpx = _get_httpx()
+        
+        if not httpx:
+            return {"error": "httpx not installed"}
+        
+        output_id = str(uuid.uuid4())
+        output_filename = f"{output_id}.mp4"
+        output_path = TEMP_DIR / output_filename
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                # Step 1: Request download URL from Cobalt
+                logger.info(f"📡 Requesting from Cobalt API: {COBALT_API_URL}")
+                
+                response = await client.post(
+                    f"{COBALT_API_URL}/",
+                    json={
+                        "url": url,
+                        "videoQuality": "1080",
+                        "youtubeVideoCodec": "h264",  # Max compatibility
+                        "filenameStyle": "basic",
+                    },
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    }
+                )
+                
+                if response.status_code != 200:
+                    return {"error": f"Cobalt API returned status {response.status_code}"}
+                
+                data = response.json()
+                status = data.get("status")
+                
+                logger.info(f"📦 Cobalt response status: {status}")
+                
+                # Handle different response types
+                if status == "error":
+                    error_info = data.get("error", {})
+                    error_code = error_info.get("code", "unknown") if isinstance(error_info, dict) else str(error_info)
+                    return {"error": f"Cobalt error: {error_code}"}
+                
+                if status == "picker":
+                    # Multiple options - pick first video
+                    picker = data.get("picker", [])
+                    if picker:
+                        download_url = picker[0].get("url")
+                        cobalt_filename = picker[0].get("filename", output_filename)
+                    else:
+                        return {"error": "Cobalt returned picker with no items"}
+                elif status in ["tunnel", "redirect"]:
+                    download_url = data.get("url")
+                    cobalt_filename = data.get("filename", output_filename)
+                else:
+                    return {"error": f"Unknown Cobalt status: {status}"}
+                
+                if not download_url:
+                    return {"error": "Cobalt did not return download URL"}
+                
+                logger.info(f"⬇️ Downloading from Cobalt tunnel: {download_url[:80]}...")
+                
+                # Step 2: Download the actual file
+                video_response = await client.get(
+                    download_url,
+                    follow_redirects=True,
+                    timeout=300.0  # 5 min timeout for large files
+                )
+                
+                if video_response.status_code != 200:
+                    return {"error": f"Failed to download from Cobalt tunnel: {video_response.status_code}"}
+                
+                # Save to file
+                output_path.write_bytes(video_response.content)
+                file_size = output_path.stat().st_size
+                
+                if file_size < 1000:  # Less than 1KB is likely an error
+                    output_path.unlink(missing_ok=True)
+                    return {"error": "Downloaded file too small, likely an error page"}
+                
+                logger.info(f"✅ Cobalt download complete: {file_size} bytes")
+                
+                # Extract title from filename if possible
+                title = Path(cobalt_filename).stem if cobalt_filename else "YouTube Video"
+                
+                return {
+                    "filename": output_filename,
+                    "title": title,
+                    "duration": 0,  # Cobalt doesn't provide duration
+                    "size": file_size,
+                    "source": "cobalt"
+                }
+                
+        except Exception as e:
+            logger.exception(f"Cobalt download error: {e}")
+            # Clean up partial file
+            output_path.unlink(missing_ok=True)
+            return {"error": f"Cobalt error: {str(e)[:100]}"}
+    
+    async def _download_via_ytdlp(self, url: str) -> dict:
+        """Download video from YouTube using yt-dlp (fallback method)"""
         logger = logging.getLogger(__name__)
         
         yt_dlp = _get_ytdlp()
@@ -93,7 +228,7 @@ class VideoService:
         output_template = str((TEMP_DIR / output_id).absolute())
         output_path = TEMP_DIR / output_filename
         
-        logger.info(f"Starting YouTube download for: {url}")
+        logger.info(f"Starting YouTube download via yt-dlp for: {url}")
         logger.info(f"Output template: {output_template}")
         
         ydl_opts = {
@@ -217,7 +352,8 @@ class VideoService:
                 "filename": output_filename,
                 "title": title,
                 "duration": duration,
-                "size": file_size
+                "size": file_size,
+                "source": "yt-dlp"
             }
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e)
@@ -347,27 +483,120 @@ class VideoService:
         return await self.download_instagram(url)
     
     async def download_youtube_with_progress(self, url: str):
-        """Download YouTube video with real-time progress streaming"""
-        import logging
+        """
+        Download YouTube video with real-time progress streaming.
+        Uses hybrid approach: Cobalt API first, then yt-dlp fallback.
+        """
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         
         logger = logging.getLogger(__name__)
-        yt_dlp = _get_ytdlp()
-        
-        if not yt_dlp:
-            yield {"status": "error", "error": "yt-dlp not installed"}
-            return
         
         output_id = str(uuid.uuid4())
         output_filename = f"{output_id}.mp4"
-        output_template = str((TEMP_DIR / output_id).absolute())
+        output_path = TEMP_DIR / output_filename
         
         # Lock file to prevent cleanup
         add_active_file(output_filename)
         
-        # Progress state shared between threads
+        # ===== TRY COBALT FIRST =====
+        yield {"status": "starting", "message": "🚀 Trying Cobalt API..."}
+        
+        httpx = _get_httpx()
+        cobalt_success = False
+        
+        if httpx:
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    yield {"status": "downloading", "percent": "5%", "percent_num": 5, "message": "Requesting from Cobalt..."}
+                    
+                    response = await client.post(
+                        f"{COBALT_API_URL}/",
+                        json={
+                            "url": url,
+                            "videoQuality": "1080",
+                            "youtubeVideoCodec": "h264",
+                            "filenameStyle": "basic",
+                        },
+                        headers={
+                            "Accept": "application/json",
+                            "Content-Type": "application/json",
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        status = data.get("status")
+                        download_url = None
+                        cobalt_filename = output_filename
+                        
+                        if status in ["tunnel", "redirect"]:
+                            download_url = data.get("url")
+                            cobalt_filename = data.get("filename", output_filename)
+                        elif status == "picker":
+                            picker = data.get("picker", [])
+                            if picker:
+                                download_url = picker[0].get("url")
+                                cobalt_filename = picker[0].get("filename", output_filename)
+                        
+                        if download_url:
+                            yield {"status": "downloading", "percent": "15%", "percent_num": 15, "message": "Downloading via Cobalt..."}
+                            
+                            # Stream download with progress
+                            async with client.stream("GET", download_url, follow_redirects=True, timeout=300.0) as stream:
+                                if stream.status_code == 200:
+                                    total = int(stream.headers.get("content-length", 0))
+                                    downloaded = 0
+                                    chunks = []
+                                    
+                                    async for chunk in stream.aiter_bytes(chunk_size=65536):
+                                        chunks.append(chunk)
+                                        downloaded += len(chunk)
+                                        if total > 0:
+                                            pct = 15 + int((downloaded / total) * 80)
+                                            yield {
+                                                "status": "downloading",
+                                                "percent": f"{pct}%",
+                                                "percent_num": pct,
+                                                "downloaded": f"{downloaded // (1024*1024)}MB",
+                                                "total": f"{total // (1024*1024)}MB",
+                                            }
+                                    
+                                    output_path.write_bytes(b"".join(chunks))
+                                    file_size = output_path.stat().st_size
+                                    
+                                    if file_size > 1000:
+                                        title = Path(cobalt_filename).stem if cobalt_filename else "YouTube Video"
+                                        yield {
+                                            "status": "complete",
+                                            "filename": output_filename,
+                                            "title": title,
+                                            "duration": 0,
+                                            "size": file_size,
+                                            "source": "cobalt"
+                                        }
+                                        remove_active_file(output_filename)
+                                        cobalt_success = True
+                                            
+            except Exception as e:
+                logger.warning(f"Cobalt streaming failed: {e}")
+                output_path.unlink(missing_ok=True)
+        
+        if cobalt_success:
+            return
+        
+        # ===== FALLBACK TO YT-DLP =====
+        yield {"status": "starting", "message": "⚠️ Cobalt unavailable, using yt-dlp..."}
+        
+        yt_dlp = _get_ytdlp()
+        if not yt_dlp:
+            yield {"status": "error", "error": "yt-dlp not installed"}
+            remove_active_file(output_filename)
+            return
+        
+        output_template = str((TEMP_DIR / output_id).absolute())
         progress_queue = asyncio.Queue()
+        loop = asyncio.get_event_loop()
         
         def progress_hook(d):
             """Called by yt-dlp with download progress"""
