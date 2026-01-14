@@ -40,7 +40,16 @@ def _get_httpx():
 TEMP_DIR = Path("./temp")
 
 # Cobalt API Configuration
-COBALT_API_URL = os.environ.get("COBALT_API_URL", "https://api.cobalt.tools")
+# The official api.cobalt.tools has bot protection - use community instances or self-host
+# Multiple instances for fallback support
+COBALT_API_URL = os.environ.get("COBALT_API_URL", "")
+COBALT_INSTANCES = [
+    COBALT_API_URL,  # User-specified (if any)
+    "https://cobalt.api.timelessnesses.me",  # Community instance
+    "https://api.cobalt.lol",  # Community instance
+]
+# Filter out empty strings
+COBALT_INSTANCES = [url for url in COBALT_INSTANCES if url]
 
 class VideoService:
     """Service for video processing operations"""
@@ -114,38 +123,46 @@ class VideoService:
         return await self._download_via_ytdlp(url)
     
     async def _download_via_cobalt(self, url: str) -> dict:
-        """Download video using Cobalt API"""
+        """Download video using Cobalt API - tries multiple instances"""
         logger = logging.getLogger(__name__)
         httpx = _get_httpx()
         
         if not httpx:
             return {"error": "httpx not installed"}
         
+        if not COBALT_INSTANCES:
+            return {"error": "No Cobalt instances configured"}
+        
         output_id = str(uuid.uuid4())
         output_filename = f"{output_id}.mp4"
         output_path = TEMP_DIR / output_filename
         
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                # Step 1: Request download URL from Cobalt
-                logger.info(f"📡 Requesting from Cobalt API: {COBALT_API_URL}")
-                
-                response = await client.post(
-                    f"{COBALT_API_URL}/",
-                    json={
-                        "url": url,
-                        "videoQuality": "1080",
-                        "youtubeVideoCodec": "h264",  # Max compatibility
-                        "filenameStyle": "basic",
-                    },
-                    headers={
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                    }
-                )
-                
-                if response.status_code != 200:
-                    return {"error": f"Cobalt API returned status {response.status_code}"}
+        last_error = "No instances available"
+        
+        for cobalt_url in COBALT_INSTANCES:
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    # Step 1: Request download URL from Cobalt
+                    logger.info(f"📡 Trying Cobalt instance: {cobalt_url}")
+                    
+                    response = await client.post(
+                        f"{cobalt_url}/",
+                        json={
+                            "url": url,
+                            "videoQuality": "1080",
+                            "youtubeVideoCodec": "h264",  # Max compatibility
+                            "filenameStyle": "basic",
+                        },
+                        headers={
+                            "Accept": "application/json",
+                            "Content-Type": "application/json",
+                        }
+                    )
+                    
+                    if response.status_code != 200:
+                        last_error = f"{cobalt_url} returned {response.status_code}"
+                        logger.warning(f"⚠️ {last_error}")
+                        continue  # Try next instance
                 
                 data = response.json()
                 status = data.get("status")
@@ -156,7 +173,9 @@ class VideoService:
                 if status == "error":
                     error_info = data.get("error", {})
                     error_code = error_info.get("code", "unknown") if isinstance(error_info, dict) else str(error_info)
-                    return {"error": f"Cobalt error: {error_code}"}
+                    last_error = f"Cobalt error: {error_code}"
+                    logger.warning(f"⚠️ {last_error}")
+                    continue  # Try next instance
                 
                 if status == "picker":
                     # Multiple options - pick first video
@@ -165,15 +184,18 @@ class VideoService:
                         download_url = picker[0].get("url")
                         cobalt_filename = picker[0].get("filename", output_filename)
                     else:
-                        return {"error": "Cobalt returned picker with no items"}
+                        last_error = "Cobalt returned picker with no items"
+                        continue  # Try next instance
                 elif status in ["tunnel", "redirect"]:
                     download_url = data.get("url")
                     cobalt_filename = data.get("filename", output_filename)
                 else:
-                    return {"error": f"Unknown Cobalt status: {status}"}
+                    last_error = f"Unknown Cobalt status: {status}"
+                    continue  # Try next instance
                 
                 if not download_url:
-                    return {"error": "Cobalt did not return download URL"}
+                    last_error = "Cobalt did not return download URL"
+                    continue  # Try next instance
                 
                 logger.info(f"⬇️ Downloading from Cobalt tunnel: {download_url[:80]}...")
                 
@@ -185,7 +207,8 @@ class VideoService:
                 )
                 
                 if video_response.status_code != 200:
-                    return {"error": f"Failed to download from Cobalt tunnel: {video_response.status_code}"}
+                    last_error = f"Failed to download from Cobalt tunnel: {video_response.status_code}"
+                    continue  # Try next instance
                 
                 # Save to file
                 output_path.write_bytes(video_response.content)
@@ -193,7 +216,8 @@ class VideoService:
                 
                 if file_size < 1000:  # Less than 1KB is likely an error
                     output_path.unlink(missing_ok=True)
-                    return {"error": "Downloaded file too small, likely an error page"}
+                    last_error = "Downloaded file too small, likely an error page"
+                    continue  # Try next instance
                 
                 logger.info(f"✅ Cobalt download complete: {file_size} bytes")
                 
@@ -208,11 +232,14 @@ class VideoService:
                     "source": "cobalt"
                 }
                 
-        except Exception as e:
-            logger.exception(f"Cobalt download error: {e}")
-            # Clean up partial file
-            output_path.unlink(missing_ok=True)
-            return {"error": f"Cobalt error: {str(e)[:100]}"}
+            except Exception as e:
+                logger.warning(f"⚠️ Cobalt instance {cobalt_url} failed: {e}")
+                last_error = str(e)[:100]
+                output_path.unlink(missing_ok=True)
+                continue  # Try next instance
+        
+        # All instances failed
+        return {"error": f"All Cobalt instances failed. Last error: {last_error}"}
     
     async def _download_via_ytdlp(self, url: str) -> dict:
         """Download video from YouTube using yt-dlp (fallback method)"""
@@ -505,22 +532,23 @@ class VideoService:
         httpx = _get_httpx()
         cobalt_success = False
         
-        if httpx:
-            try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    yield {"status": "downloading", "percent": "5%", "percent_num": 5, "message": "Requesting from Cobalt..."}
-                    
-                    response = await client.post(
-                        f"{COBALT_API_URL}/",
-                        json={
-                            "url": url,
-                            "videoQuality": "1080",
-                            "youtubeVideoCodec": "h264",
-                            "filenameStyle": "basic",
-                        },
-                        headers={
-                            "Accept": "application/json",
-                            "Content-Type": "application/json",
+        if httpx and COBALT_INSTANCES:
+            for cobalt_url in COBALT_INSTANCES:
+                try:
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        yield {"status": "downloading", "percent": "5%", "percent_num": 5, "message": f"Trying {cobalt_url}..."}
+                        
+                        response = await client.post(
+                            f"{cobalt_url}/",
+                            json={
+                                "url": url,
+                                "videoQuality": "1080",
+                                "youtubeVideoCodec": "h264",
+                                "filenameStyle": "basic",
+                            },
+                            headers={
+                                "Accept": "application/json",
+                                "Content-Type": "application/json",
                         }
                     )
                     
